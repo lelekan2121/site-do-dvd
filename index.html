@@ -687,6 +687,9 @@
   .gta-player[hidden] { display: none; }
   #gtaSeek { width: 100%; accent-color: #ff2fd1; }
   .gta-tempo { font-size: 13px; color: #d9b8ff; font-family: Verdana, sans-serif; }
+
+  /* ===== Menu do topo acompanha a rolagem ===== */
+  .topo-links { position: sticky; top: 40px; z-index: 900; box-shadow: 0 4px 10px rgba(0,0,0,0.6); }
 </style>
 </head>
 <body>
@@ -714,7 +717,6 @@
     <div class="bussola-faixa" id="bussolaFaixa"></div>
     <div class="bussola-marca"></div>
   </div>
-  <div class="neve" id="neve"></div>
 
   <div class="legenda" id="legenda">
     <div class="legenda-nome">Paarthurnax</div>
@@ -957,19 +959,6 @@
   window.addEventListener("scroll", atualizaBussola);
   atualizaBussola();
 
-  // Neve
-  const neve = document.getElementById("neve");
-  for (let i = 0; i < 60; i++) {
-    const f = document.createElement("div");
-    f.className = "floco";
-    f.textContent = "❄";
-    f.style.left = Math.random() * 100 + "%";
-    f.style.fontSize = (8 + Math.random() * 14) + "px";
-    f.style.animationDuration = (8 + Math.random() * 10) + "s";
-    f.style.animationDelay = (-Math.random() * 15) + "s";
-    neve.appendChild(f);
-  }
-
   // Legendas estilo Skyrim
   const falas = [
     "O que é melhor: nascer bom...",
@@ -1192,17 +1181,16 @@ document.getElementById("abaMisterio").addEventListener("click", (e) => {
     abreMatrix();
   });
 
-  // ===== Comentários por seção (banco compartilhado) =====
+  // ===== Comentários por seção =====
+  // No Claude usa o banco do artifact; no Netlify usa a função /.netlify/functions/comentarios
   (async () => {
+    const API = "/.netlify/functions/comentarios";
     const blocos = Array.from(document.querySelectorAll(".com-bloco"));
-    let todos = [];
 
-    function desenhaBloco(b) {
-      const post = b.dataset.post;
+    function renderLista(b, itens) {
       const lista = b.querySelector(".com-lista");
       lista.textContent = "";
-      const atuais = todos.filter(c => c && c.post === post)
-        .sort((x, y) => (x.criadoEm || 0) - (y.criadoEm || 0));
+      const atuais = (itens || []).slice().sort((x, y) => (x.criadoEm || 0) - (y.criadoEm || 0));
       if (!atuais.length) {
         const vazio = document.createElement("div");
         vazio.className = "com-item";
@@ -1223,25 +1211,51 @@ document.getElementById("abaMisterio").addEventListener("click", (e) => {
         lista.appendChild(item);
       }
     }
-    const desenhaTodos = () => blocos.forEach(desenhaBloco);
 
     let db = null;
     try { db = window.claude ? await window.claude.use("db") : null; } catch (e) { db = null; }
 
-    if (!db) {
-      blocos.forEach(b => {
-        b.querySelector(".com-aviso").textContent = "Comentários indisponíveis nesta visualização.";
-        b.querySelectorAll("input, textarea, button").forEach(el => el.disabled = true);
-      });
+    // ---------- Modo Claude (artifact) ----------
+    if (db) {
+      let todos = [];
+      const desenhaTodos = () => blocos.forEach(b =>
+        renderLista(b, todos.filter(c => c && c.post === b.dataset.post)));
+      db.collection("comentarios").limit(300).onSnapshot(
+        (snap) => { todos = snap.docs.map(d => d.data()); desenhaTodos(); },
+        () => blocos.forEach(b => b.querySelector(".com-aviso").textContent = "Não foi possível carregar os comentários agora.")
+      );
+      blocos.forEach(b => ligaFormulario(b, async (nick, texto) => {
+        await db.collection("comentarios").add({ nick, texto, post: b.dataset.post, criadoEm: Date.now() });
+      }));
       return;
     }
 
-    db.collection("comentarios").limit(300).onSnapshot(
-      (snap) => { todos = snap.docs.map(d => d.data()); desenhaTodos(); },
-      () => blocos.forEach(b => b.querySelector(".com-aviso").textContent = "Não foi possível carregar os comentários agora.")
-    );
+    // ---------- Modo Netlify (função) ----------
+    async function carregaBloco(b) {
+      try {
+        const r = await fetch(`${API}?post=${encodeURIComponent(b.dataset.post)}`);
+        if (!r.ok) throw new Error("erro");
+        renderLista(b, await r.json());
+        b.querySelector(".com-aviso").textContent = "";
+      } catch (e) {
+        b.querySelector(".com-aviso").textContent = "Não foi possível carregar os comentários agora.";
+      }
+    }
+    blocos.forEach(carregaBloco);
+    setInterval(() => blocos.forEach(carregaBloco), 10000);
 
-    blocos.forEach(b => {
+    blocos.forEach(b => ligaFormulario(b, async (nick, texto) => {
+      const r = await fetch(API, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nick, texto, post: b.dataset.post })
+      });
+      if (!r.ok) throw new Error("erro");
+      await carregaBloco(b);
+    }));
+
+    // ---------- Formulário comum ----------
+    function ligaFormulario(b, enviar) {
       const nickEl = b.querySelector(".com-nick");
       const textoEl = b.querySelector(".com-texto");
       const botao = b.querySelector(".com-enviar");
@@ -1253,7 +1267,7 @@ document.getElementById("abaMisterio").addEventListener("click", (e) => {
         botao.disabled = true;
         aviso.textContent = "Enviando...";
         try {
-          await db.collection("comentarios").add({ nick, texto, post: b.dataset.post, criadoEm: Date.now() });
+          await enviar(nick, texto);
           textoEl.value = "";
           aviso.textContent = "Comentário salvo.";
         } catch (err) {
@@ -1262,41 +1276,22 @@ document.getElementById("abaMisterio").addEventListener("click", (e) => {
           botao.disabled = false;
         }
       });
-    });
+    }
   })();
 
-  // ===== Player GTA VI =====
-  (function () {
-    const audio = document.getElementById("gtaAudio");
-    const wrap = document.getElementById("viWrap");
-    const player = document.getElementById("gtaPlayer");
-    const btnOuvir = document.getElementById("gtaOuvir");
-    const btnPlay = document.getElementById("gtaPlay");
-    const seek = document.getElementById("gtaSeek");
-    const atual = document.getElementById("gtaAtual");
-    const total = document.getElementById("gtaTotal");
-    const fmt = s => (!isFinite(s) || s < 0) ? "0:00" :
-      Math.floor(s / 60) + ":" + String(Math.floor(s % 60)).padStart(2, "0");
-
-    btnOuvir.addEventListener("click", () => {
-      player.hidden = false;
-      audio.play().catch(() => {});
-    });
-    btnPlay.addEventListener("click", () => {
-      if (audio.paused) audio.play().catch(() => {}); else audio.pause();
-    });
-    audio.addEventListener("play", () => { wrap.classList.add("tocando"); btnPlay.textContent = "❚❚"; });
-    audio.addEventListener("pause", () => { wrap.classList.remove("tocando"); btnPlay.textContent = "▶"; });
-    audio.addEventListener("ended", () => { wrap.classList.remove("tocando"); btnPlay.textContent = "▶"; });
-    audio.addEventListener("loadedmetadata", () => { total.textContent = fmt(audio.duration); });
-    audio.addEventListener("timeupdate", () => {
-      atual.textContent = fmt(audio.currentTime);
-      if (audio.duration) seek.value = (audio.currentTime / audio.duration) * 100;
-    });
-    seek.addEventListener("input", () => {
-      if (audio.duration) audio.currentTime = (seek.value / 100) * audio.duration;
-    });
-  })();
+  // Clique no avatar do Paarthurnax: fala uma frase e o balão some depois
+  const paarAvatar = document.getElementById("paarAvatar");
+  let paarTimer = null;
+  paarAvatar.addEventListener("click", () => {
+    const balao = document.getElementById("paarBalao");
+    paarAvatar.classList.remove("falando");
+    void paarAvatar.offsetWidth;
+    paarAvatar.classList.add("falando");
+    mostraFala();
+    balao.classList.add("visivel");
+    clearTimeout(paarTimer);
+    paarTimer = setTimeout(() => balao.classList.remove("visivel"), 6000);
+  });
 </script>
 
 </body>
