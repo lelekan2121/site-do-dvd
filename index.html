@@ -693,7 +693,7 @@
 
   /* ===== Paarthurnax: avatar redondo no canto de baixo ===== */
   .paar-avatar {
-    position: fixed; bottom: 20px; left: 12px; width: 64px; height: 64px;
+    position: fixed; bottom: 20px; right: 12px; width: 64px; height: 64px;
     border-radius: 50%; overflow: hidden; z-index: 1001; cursor: pointer;
     border: 3px double #ffd66b; box-shadow: 0 0 12px #9fd8ff88, 0 0 4px #000; background: #000;
   }
@@ -705,7 +705,7 @@
     100% { transform: scale(1); box-shadow: 0 0 12px #9fd8ff88, 0 0 4px #000; }
   }
   .paar-balao {
-    position: fixed; bottom: 20px; left: 88px; width: min(72vw, 340px); z-index: 1001;
+    position: fixed; bottom: 20px; right: 88px; width: min(72vw, 340px); z-index: 1001;
     background: rgba(0,0,0,0.78); border: 1px solid #ffd66b; padding: 8px 12px;
     box-shadow: 0 0 12px rgba(159,216,255,0.35); pointer-events: none;
     opacity: 0; transition: opacity .4s ease;
@@ -1297,6 +1297,38 @@ document.getElementById("abaMisterio").addEventListener("click", (e) => {
     clearTimeout(paarTimer);
     paarTimer = setTimeout(() => balao.classList.remove("visivel"), 6000);
   });
+  // ===== Player GTA VI =====
+  (function () {
+    const audio = document.getElementById("gtaAudio");
+    const wrap = document.getElementById("viWrap");
+    const player = document.getElementById("gtaPlayer");
+    const btnOuvir = document.getElementById("gtaOuvir");
+    const btnPlay = document.getElementById("gtaPlay");
+    const seek = document.getElementById("gtaSeek");
+    const atual = document.getElementById("gtaAtual");
+    const total = document.getElementById("gtaTotal");
+    const fmt = s => (!isFinite(s) || s < 0) ? "0:00" :
+      Math.floor(s / 60) + ":" + String(Math.floor(s % 60)).padStart(2, "0");
+
+    btnOuvir.addEventListener("click", () => {
+      player.hidden = false;
+      audio.play().catch(() => { btnOuvir.textContent = "Toque de novo para ouvir"; });
+    });
+    btnPlay.addEventListener("click", () => {
+      if (audio.paused) audio.play().catch(() => {}); else audio.pause();
+    });
+    audio.addEventListener("play", () => { wrap.classList.add("tocando"); btnPlay.textContent = "❚❚"; });
+    audio.addEventListener("pause", () => { wrap.classList.remove("tocando"); btnPlay.textContent = "▶"; });
+    audio.addEventListener("ended", () => { wrap.classList.remove("tocando"); btnPlay.textContent = "▶"; });
+    audio.addEventListener("loadedmetadata", () => { total.textContent = fmt(audio.duration); });
+    audio.addEventListener("timeupdate", () => {
+      atual.textContent = fmt(audio.currentTime);
+      if (audio.duration) seek.value = (audio.currentTime / audio.duration) * 100;
+    });
+    seek.addEventListener("input", () => {
+      if (audio.duration) audio.currentTime = (seek.value / 100) * audio.duration;
+    });
+  })();
 </script>
 
 </body>
