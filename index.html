@@ -723,7 +723,7 @@
         <p>Se você está lendo isto, escolheu a pílula vermelha. Boa sorte, herói. Lembre-se: não existe colete, só existe o colete que você acha que tem.</p>
       </div>
       <div id="somAviso" style="color:#c8ffd6;font-size:13px;min-height:1.2em;"></div>
-      <button class="matrix-sair" id="somBotao">▶ OUVIR</button>
+      <button class="matrix-sair" id="somBotao">▶ OUVIR (narração)</button>
       <button class="matrix-sair" id="matrixSair">SAIR DA MATRIX</button>
     </div>
   </div>
@@ -1105,6 +1105,7 @@
     desenhaChuva();
   }
   function fechaMatrix() {
+    if ("speechSynthesis" in window) speechSynthesis.cancel();
     matrixEl.classList.remove("aberta");
     const som = document.getElementById("somMisterio");
     som.pause();
@@ -1128,7 +1129,32 @@
   document.getElementById("somMisterio").addEventListener("error", () => {
     document.getElementById("somAviso").textContent = "Não consegui carregar o áudio.";
   });
-  document.getElementById("somBotao").addEventListener("click", tocaSom);
+    // Narração: lê o texto da página secreta e abaixa a música enquanto fala
+  function narrar() {
+    const som = document.getElementById("somMisterio");
+    const aviso = document.getElementById("somAviso");
+    if (!("speechSynthesis" in window)) {
+      aviso.textContent = "Este navegador não tem leitura por voz.";
+      return;
+    }
+    if (som.paused) tocaSom();
+    const textos = Array.from(document.querySelectorAll(".matrix-texto p")).map(p => p.textContent);
+    const fala = new SpeechSynthesisUtterance(textos.join(" ... "));
+    const voz = speechSynthesis.getVoices().find(v => v.lang && v.lang.toLowerCase().startsWith("pt"));
+    if (voz) fala.voice = voz;
+    fala.lang = "pt-BR";
+    fala.rate = 0.9;
+    fala.pitch = 0.7;
+    const volMusica = 0.6;
+    som.volume = 0.12;
+    const restaura = () => { som.volume = volMusica; aviso.textContent = ""; };
+    fala.onend = restaura;
+    fala.onerror = restaura;
+    speechSynthesis.cancel();
+    aviso.textContent = "Narrando...";
+    speechSynthesis.speak(fala);
+  }
+  document.getElementById("somBotao").addEventListener("click", narrar);
 
 document.getElementById("abaMisterio").addEventListener("click", (e) => {
     e.preventDefault();
