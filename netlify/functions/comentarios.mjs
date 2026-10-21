@@ -2,26 +2,35 @@ import { getStore } from "@netlify/blobs";
 import { createHash, randomUUID } from "node:crypto";
 
 const hash = (t) => createHash("sha256").update(t).digest("hex");
+const POSTS = ["inicio", "espada", "lydia", "mw2", "matrix"];
 
-// Comentários por seção. Cada comentário tem um id e o "dono" (hash do token do navegador).
-// Só quem tem o token original consegue apagar o comentário.
+// Chave de cada comentário. Comentários antigos não têm id, então usamos data + nick.
+const chaveDe = (c) => c.id || String(c.criadoEm) + "|" + (c.nick || "");
+
 export default async (req) => {
   const store = getStore("comentarios");
+  const url = new URL(req.url);
+  const senhaCerta = process.env.ADMIN_SENHA || "";
 
-  // Limpeza de todos os comentários (uso do administrador).
-  // Precisa da senha guardada na variável de ambiente ADMIN_SENHA no Netlify.
-  if (req.method === "GET" && new URL(req.url).searchParams.has("limpar")) {
-    const senhaCerta = process.env.ADMIN_SENHA || "";
-    const senha = new URL(req.url).searchParams.get("senha") || "";
-    if (!senhaCerta || senha !== senhaCerta) return new Response("Senha incorreta", { status: 403 });
-    for (const post of ["inicio", "espada", "lydia", "mw2", "matrix"]) {
-      await store.delete(post);
+  // ---------- Administrador: listar todos os comentários ----------
+  if (req.method === "GET" && url.searchParams.has("admin")) {
+    if (!senhaCerta || url.searchParams.get("senha") !== senhaCerta) {
+      return new Response("Senha incorreta", { status: 403 });
     }
-    return new Response("Todos os comentários foram apagados.", { status: 200 });
+    const todos = [];
+    for (const post of POSTS) {
+      const lista = (await store.get(post, { type: "json" })) || [];
+      for (const c of lista) {
+        todos.push({ post, chave: chaveDe(c), nick: c.nick, texto: c.texto, criadoEm: c.criadoEm });
+      }
+    }
+    todos.sort((a, b) => (b.criadoEm || 0) - (a.criadoEm || 0));
+    return Response.json(todos);
   }
 
+  // ---------- Leitura pública por seção ----------
   if (req.method === "GET") {
-    const post = new URL(req.url).searchParams.get("post") || "";
+    const post = url.searchParams.get("post") || "";
     const lista = (await store.get(post, { type: "json" })) || [];
     return Response.json(lista);
   }
@@ -44,13 +53,24 @@ export default async (req) => {
 
   if (req.method === "DELETE") {
     const body = await req.json().catch(() => null);
-    if (!body || !body.id || !body.post || !body.token) return new Response("Campos obrigatórios", { status: 400 });
+    if (!body || !body.post) return new Response("Campos obrigatórios", { status: 400 });
 
+    // Administrador apaga um comentário escolhido
+    if (body.senha !== undefined) {
+      if (!senhaCerta || body.senha !== senhaCerta) return new Response("Senha incorreta", { status: 403 });
+      const lista = (await store.get(body.post, { type: "json" })) || [];
+      const nova = lista.filter((c) => chaveDe(c) !== body.chave);
+      if (nova.length === lista.length) return new Response("Comentário não encontrado", { status: 404 });
+      await store.setJSON(body.post, nova);
+      return Response.json({ ok: true });
+    }
+
+    // Quem escreveu apaga o próprio comentário (com o token do navegador)
+    if (!body.id || !body.token) return new Response("Campos obrigatórios", { status: 400 });
     const lista = (await store.get(body.post, { type: "json" })) || [];
     const alvo = lista.find((c) => c.id === body.id);
     if (!alvo) return new Response("Comentário não encontrado", { status: 404 });
     if (alvo.dono !== hash(String(body.token))) return new Response("Este comentário não é seu", { status: 403 });
-
     await store.setJSON(body.post, lista.filter((c) => c.id !== body.id));
     return Response.json({ ok: true });
   }
