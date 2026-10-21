@@ -735,6 +735,12 @@
     45% { opacity: 0.9; }
     48% { opacity: 0.2; }
   }
+
+  .com-apagar {
+    background: #000; color: #ff7070; border: 1px solid #ff7070; font-size: 11px;
+    padding: 2px 8px; margin-top: 6px; cursor: pointer; font-family: inherit;
+  }
+  .com-apagar:hover { background: #ff7070; color: #000; }
 </style>
 </head>
 <body>
@@ -1207,11 +1213,28 @@ document.getElementById("abaMisterio").addEventListener("click", (e) => {
     abreMatrix();
   });
 
-  // ===== Comentários por seção =====
-  // No Claude usa o banco do artifact; no Netlify usa a função /.netlify/functions/comentarios
+  // ===== Comentários por seção (cada um apaga só os próprios) =====
   (async () => {
     const API = "/.netlify/functions/comentarios";
     const blocos = Array.from(document.querySelectorAll(".com-bloco"));
+    let db = null;
+    try { db = window.claude ? await window.claude.use("db") : null; } catch (e) { db = null; }
+
+    async function sha256hex(t) {
+      const b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(t));
+      return Array.from(new Uint8Array(b)).map(x => x.toString(16).padStart(2, "0")).join("");
+    }
+    function meuToken() {
+      let t = null;
+      try { t = localStorage.getItem("dvdToken"); } catch (e) {}
+      if (!t) {
+        t = crypto.randomUUID ? crypto.randomUUID() : Date.now() + "-" + Math.random().toString(36).slice(2);
+        try { localStorage.setItem("dvdToken", t); } catch (e) {}
+      }
+      return t;
+    }
+    const token = meuToken();
+    const meuHash = await sha256hex(token);
 
     function renderLista(b, itens) {
       const lista = b.querySelector(".com-lista");
@@ -1234,29 +1257,17 @@ document.getElementById("abaMisterio").addEventListener("click", (e) => {
         const quando = document.createElement("small");
         quando.textContent = c.criadoEm ? new Date(c.criadoEm).toLocaleString("pt-BR") : "";
         item.append(quem, texto, quando);
+        if (c.id && c.dono && c.dono === meuHash) {
+          const apagar = document.createElement("button");
+          apagar.className = "com-apagar";
+          apagar.textContent = "apagar";
+          apagar.addEventListener("click", () => apagarComentario(b, c));
+          item.appendChild(apagar);
+        }
         lista.appendChild(item);
       }
     }
 
-    let db = null;
-    try { db = window.claude ? await window.claude.use("db") : null; } catch (e) { db = null; }
-
-    // ---------- Modo Claude (artifact) ----------
-    if (db) {
-      let todos = [];
-      const desenhaTodos = () => blocos.forEach(b =>
-        renderLista(b, todos.filter(c => c && c.post === b.dataset.post)));
-      db.collection("comentarios").limit(300).onSnapshot(
-        (snap) => { todos = snap.docs.map(d => d.data()); desenhaTodos(); },
-        () => blocos.forEach(b => b.querySelector(".com-aviso").textContent = "Não foi possível carregar os comentários agora.")
-      );
-      blocos.forEach(b => ligaFormulario(b, async (nick, texto) => {
-        await db.collection("comentarios").add({ nick, texto, post: b.dataset.post, criadoEm: Date.now() });
-      }));
-      return;
-    }
-
-    // ---------- Modo Netlify (função) ----------
     async function carregaBloco(b) {
       try {
         const r = await fetch(`${API}?post=${encodeURIComponent(b.dataset.post)}`);
@@ -1267,20 +1278,28 @@ document.getElementById("abaMisterio").addEventListener("click", (e) => {
         b.querySelector(".com-aviso").textContent = "Não foi possível carregar os comentários agora.";
       }
     }
-    blocos.forEach(carregaBloco);
-    setInterval(() => blocos.forEach(carregaBloco), 10000);
 
-    blocos.forEach(b => ligaFormulario(b, async (nick, texto) => {
-      const r = await fetch(API, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ nick, texto, post: b.dataset.post })
-      });
-      if (!r.ok) throw new Error("erro");
-      await carregaBloco(b);
-    }));
+    async function apagarComentario(b, c) {
+      const aviso = b.querySelector(".com-aviso");
+      if (!confirm("Apagar este comentário?")) return;
+      try {
+        if (db) {
+          await db.collection("comentarios").doc(c.id).delete();
+        } else {
+          const r = await fetch(API, {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: c.id, post: c.post, token })
+          });
+          if (!r.ok) throw new Error("erro");
+          await carregaBloco(b);
+        }
+        aviso.textContent = "Comentário apagado.";
+      } catch (e) {
+        aviso.textContent = "Não foi possível apagar agora.";
+      }
+    }
 
-    // ---------- Formulário comum ----------
     function ligaFormulario(b, enviar) {
       const nickEl = b.querySelector(".com-nick");
       const textoEl = b.querySelector(".com-texto");
@@ -1293,7 +1312,7 @@ document.getElementById("abaMisterio").addEventListener("click", (e) => {
         botao.disabled = true;
         aviso.textContent = "Enviando...";
         try {
-          await enviar(nick, texto);
+          await enviar(b, nick, texto);
           textoEl.value = "";
           aviso.textContent = "Comentário salvo.";
         } catch (err) {
@@ -1303,21 +1322,34 @@ document.getElementById("abaMisterio").addEventListener("click", (e) => {
         }
       });
     }
+
+    if (db) {
+      let todos = [];
+      const desenhaTodos = () => blocos.forEach(b =>
+        renderLista(b, todos.filter(c => c && c.post === b.dataset.post)));
+      db.collection("comentarios").limit(300).onSnapshot(
+        (snap) => { todos = snap.docs.map(d => ({ ...d.data(), id: d.id })); desenhaTodos(); },
+        () => blocos.forEach(b => b.querySelector(".com-aviso").textContent = "Não foi possível carregar os comentários agora.")
+      );
+      blocos.forEach(b => ligaFormulario(b, async (bl, nick, texto) => {
+        await db.collection("comentarios").add({ nick, texto, post: bl.dataset.post, criadoEm: Date.now(), dono: meuHash });
+      }));
+      return;
+    }
+
+    blocos.forEach(carregaBloco);
+    setInterval(() => blocos.forEach(carregaBloco), 10000);
+    blocos.forEach(b => ligaFormulario(b, async (bl, nick, texto) => {
+      const r = await fetch(API, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nick, texto, post: bl.dataset.post, token })
+      });
+      if (!r.ok) throw new Error("erro");
+      await carregaBloco(bl);
+    }));
   })();
 
-  // Clique no avatar do Paarthurnax: fala uma frase e o balão some depois
-  const paarAvatar = document.getElementById("paarAvatar");
-  let paarTimer = null;
-  paarAvatar.addEventListener("click", () => {
-    const balao = document.getElementById("paarBalao");
-    paarAvatar.classList.remove("falando");
-    void paarAvatar.offsetWidth;
-    paarAvatar.classList.add("falando");
-    mostraFala();
-    balao.classList.add("visivel");
-    clearTimeout(paarTimer);
-    paarTimer = setTimeout(() => balao.classList.remove("visivel"), 6000);
-  });
   // ===== Player GTA VI =====
   (function () {
     const audio = document.getElementById("gtaAudio");
