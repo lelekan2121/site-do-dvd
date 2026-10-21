@@ -1,6 +1,10 @@
 import { getStore } from "@netlify/blobs";
+import { createHash, randomUUID } from "node:crypto";
 
-// Guarda os comentários por seção (post). Cada seção é uma chave no armazenamento.
+const hash = (t) => createHash("sha256").update(t).digest("hex");
+
+// Comentários por seção. Cada comentário tem um id e o "dono" (hash do token do navegador).
+// Só quem tem o token original consegue apagar o comentário.
 export default async (req) => {
   const store = getStore("comentarios");
 
@@ -17,11 +21,25 @@ export default async (req) => {
     const nick = String(body.nick || "").trim().slice(0, 20);
     const texto = String(body.texto || "").trim().slice(0, 280);
     const post = String(body.post || "").slice(0, 30);
-    if (!nick || !texto || !post) return new Response("Campos obrigatórios", { status: 400 });
+    const token = String(body.token || "");
+    if (!nick || !texto || !post || !token) return new Response("Campos obrigatórios", { status: 400 });
 
     const lista = (await store.get(post, { type: "json" })) || [];
-    lista.push({ nick, texto, post, criadoEm: Date.now() });
+    lista.push({ id: randomUUID(), nick, texto, post, criadoEm: Date.now(), dono: hash(token) });
     await store.setJSON(post, lista.slice(-300));
+    return Response.json({ ok: true });
+  }
+
+  if (req.method === "DELETE") {
+    const body = await req.json().catch(() => null);
+    if (!body || !body.id || !body.post || !body.token) return new Response("Campos obrigatórios", { status: 400 });
+
+    const lista = (await store.get(body.post, { type: "json" })) || [];
+    const alvo = lista.find((c) => c.id === body.id);
+    if (!alvo) return new Response("Comentário não encontrado", { status: 404 });
+    if (alvo.dono !== hash(String(body.token))) return new Response("Este comentário não é seu", { status: 403 });
+
+    await store.setJSON(body.post, lista.filter((c) => c.id !== body.id));
     return Response.json({ ok: true });
   }
 
