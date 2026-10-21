@@ -8,6 +8,18 @@ const hash = (t) => createHash("sha256").update(t).digest("hex");
 export default async (req) => {
   const store = getStore("comentarios");
 
+  // Limpeza de todos os comentários (uso do administrador).
+  // Precisa da senha guardada na variável de ambiente ADMIN_SENHA no Netlify.
+  if (req.method === "GET" && new URL(req.url).searchParams.has("limpar")) {
+    const senhaCerta = process.env.ADMIN_SENHA || "";
+    const senha = new URL(req.url).searchParams.get("senha") || "";
+    if (!senhaCerta || senha !== senhaCerta) return new Response("Senha incorreta", { status: 403 });
+    for (const post of ["inicio", "espada", "lydia", "mw2", "matrix"]) {
+      await store.delete(post);
+    }
+    return new Response("Todos os comentários foram apagados.", { status: 200 });
+  }
+
   if (req.method === "GET") {
     const post = new URL(req.url).searchParams.get("post") || "";
     const lista = (await store.get(post, { type: "json" })) || [];
