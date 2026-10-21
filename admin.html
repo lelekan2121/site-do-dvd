@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Moderação de comentários</title>
+<style>
+  body { font-family: Verdana, sans-serif; background: #0a0a0a; color: #ddd; margin: 0; padding: 16px; }
+  h1 { color: #00ff41; font-size: 20px; }
+  .linha { display: flex; gap: 8px; margin-bottom: 14px; }
+  input { flex: 1; background: #000; color: #00ff41; border: 1px solid #00ff41; padding: 8px; }
+  button { background: #000; color: #00ff41; border: 1px solid #00ff41; padding: 8px 12px; cursor: pointer; }
+  button:hover { background: #00ff41; color: #000; }
+  .apagar { color: #ff7070; border-color: #ff7070; }
+  .apagar:hover { background: #ff7070; color: #000; }
+  .item { border-left: 3px solid #00ff41; background: #111; padding: 10px; margin-bottom: 10px; }
+  .item small { color: #888; display: block; margin-top: 4px; }
+  #status { color: #9bc29b; min-height: 1.2em; margin-bottom: 10px; }
+</style>
+</head>
+<body>
+  <h1>Moderação de comentários</h1>
+  <div class="linha">
+    <input id="senha" type="password" placeholder="Senha de administrador">
+    <button id="carregar">Carregar</button>
+  </div>
+  <div id="status"></div>
+  <div id="lista"></div>
+
+<script>
+  const API = "/.netlify/functions/comentarios";
+  const nomes = { inicio: "Início", espada: "Espada", lydia: "Lydia", mw2: "Call of Duty", matrix: "Página secreta" };
+  const senhaEl = document.getElementById("senha");
+  const statusEl = document.getElementById("status");
+  const listaEl = document.getElementById("lista");
+
+  async function carregar() {
+    statusEl.textContent = "Carregando...";
+    listaEl.textContent = "";
+    try {
+      const r = await fetch(`${API}?admin=1&senha=${encodeURIComponent(senhaEl.value)}`);
+      if (!r.ok) { statusEl.textContent = r.status === 403 ? "Senha incorreta." : "Erro ao carregar."; return; }
+      const itens = await r.json();
+      statusEl.textContent = itens.length ? `${itens.length} comentário(s).` : "Nenhum comentário.";
+      for (const c of itens) {
+        const box = document.createElement("div");
+        box.className = "item";
+        const topo = document.createElement("b");
+        topo.textContent = `${c.nick || "Anônimo"} em ${nomes[c.post] || c.post}`;
+        const texto = document.createElement("div");
+        texto.textContent = c.texto || "";
+        const quando = document.createElement("small");
+        quando.textContent = c.criadoEm ? new Date(c.criadoEm).toLocaleString("pt-BR") : "";
+        const btn = document.createElement("button");
+        btn.className = "apagar";
+        btn.textContent = "Apagar este";
+        btn.addEventListener("click", () => apagar(c));
+        box.append(topo, texto, quando, btn);
+        listaEl.appendChild(box);
+      }
+    } catch (e) {
+      statusEl.textContent = "Erro de conexão.";
+    }
+  }
+
+  async function apagar(c) {
+    if (!confirm(`Apagar o comentário de "${c.nick}"?\n\n"${c.texto}"`)) return;
+    const r = await fetch(API, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ senha: senhaEl.value, post: c.post, chave: c.chave })
+    });
+    if (r.ok) { statusEl.textContent = "Comentário apagado."; carregar(); }
+    else statusEl.textContent = "Não foi possível apagar.";
+  }
+
+  document.getElementById("carregar").addEventListener("click", carregar);
+</script>
+</body>
+</html>
